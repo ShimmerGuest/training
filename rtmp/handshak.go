@@ -5,8 +5,8 @@ import (
 	`crypto/hmac`
 	`crypto/sha256`
 	`encoding/binary`
+	`errors`
 	`io`
-	`media/src/library/errors`
 	`net`
 )
 
@@ -47,7 +47,8 @@ func handshake(c net.Conn) error {
 	if binary.BigEndian.Uint32(c0c1[5:]) == 0 {
 		err = simpleHandshake(c, c0c1)
 	} else {
-		err = complexMode(c, c0c1)
+		//待完成
+		//key = complexMode(c, c0c1)
 	}
 	
 	return nil
@@ -69,38 +70,57 @@ func simpleHandshake(c net.Conn, c0c1 []byte) error {
 	s2 := s0s1s2[1537:]
 	copy(s2, c0c1[1:])
 	
-	if n, err := c.Write(s2); err != nil{
+	if n, err := c.Write(s0s1s2); err != nil{
 		return err
 	} else if n != len(s2) {
 		return ErrWriteEnough
 	}
 	
-	return nil
+	//读满c2
+	_, err := io.ReadFull(c, c0c1[1:])
+	
+	return err
 }
 
 
-func complexMode(c net.Conn, c0c1 []byte) error {
+func complexMode(c net.Conn, c0c1 []byte) []byte {
 	
-	if findDigest(c0c1[1:], 8)  {
-	
+	offs := findDigest(c0c1[1:], 8)
+	if offs == -1 {
+		if offs = findDigest(c0c1[1:], 8 + 764); offs == -1 {
+		
+		}
+		
+		//左右都不对
+		if offs == -1 {
+		
+		}
 	}
 	
-	
+	//c0c1, 经过
+	mac := hmac.New(sha256.New, serverKey)
+	mac.Write(c0c1[1+offs:1+offs+32])
+	//s2key := mac.Sum(nil)
+
+	//计算s2
 	return nil
+	
 }
 
 
-func findDigest(buf []byte, base int) bool {
+func findDigest(buf []byte, base int) int {
 	//也就是说这个offset是相对于自己的offset，并不是相对于c1的offset
 	offset := (int(buf[base]) + int(buf[base+1]) + int(buf[base+2]) + int(buf[base+3])) % 728 + base + 4
-	digest := make([]byte, 32)
+	c1digest := make([]byte, 32)
 	//对整个c1做digest
-	makeDigest(buf, clientKey, digest, offset)
+	makeDigest(buf, clientKey, c1digest, offset)
 	
-	if bytes.Compare(digest, buf[offset:offset + 32]) == 0 {
-	
+	if bytes.Compare(c1digest, buf[offset:offset + 32]) != 0 {
+		//不相等
+		return -1
 	}
-	return
+	
+	return offset
 }
 
 func makeDigest(b , key, out []byte, offset int) {
@@ -119,3 +139,18 @@ func makeDigest(b , key, out []byte, offset int) {
 	copy(out, mac.Sum(nil))
 }
 
+
+var random1528Buf []byte
+
+func random1528(out []byte) {
+	copy(out, random1528Buf)
+}
+
+func init() {
+	bs := []byte{'l', 'a', 'l'}
+	bsl := len(bs)
+	random1528Buf = make([]byte, 1528)
+	for i := 0; i < 1528; i++ {
+		random1528Buf[i] = bs[i%bsl]
+	}
+}
