@@ -34,26 +34,25 @@ func handlerConnect(c net.Conn) {
 	rs := RtmpSession{
 		c:c,
 	}
+	
 	err := receiveMsg(&rs)
 	if err != nil {
-	
 	}
 	
 	//close 只作为警告处理
 	err := c.Close()
 	
-	
 }
 
 
 
-func receiveMsg(s *RtmpSession) error {
+func receiveMsg(rs *RtmpSession) error {
 	
 	var err error
 	var fmt byte
 	bootstrap := make([]byte, 11)
 	for {
-		_, err := io.ReadAtLeast(s.c, bootstrap[:1], 1)
+		_, err = io.ReadAtLeast(rs.c, bootstrap[:1], 1)
 		if err != nil {
 			return err
 		}
@@ -72,11 +71,11 @@ func receiveMsg(s *RtmpSession) error {
 		switch csid {
 		case 0:
 			//read 1 byte, csid
-			if _, err = io.ReadAtLeast(s.c, bootstrap[:1], 1); err != nil {return err}
+			if _, err = io.ReadAtLeast(rs.c, bootstrap[:1], 1); err != nil {return err}
 			csid = int(bootstrap[0]) + 64
 			break
 		case 1:
-			if _, err = io.ReadAtLeast(s.c, bootstrap[:2], 2); err != nil {return err}
+			if _, err = io.ReadAtLeast(rs.c, bootstrap[:2], 2); err != nil {return err}
 			csid = int(bootstrap[0]) + int(bootstrap[1]) * 256
 			break
 		//case 2:
@@ -87,19 +86,29 @@ func receiveMsg(s *RtmpSession) error {
 		}
 		
 		//将当前流的msg和head放到流中
-		s := getStream(csid)
-		s.head.csid = 1
+		st := getStream(csid)
+		st.head.csid = 1
+		
+		//
 		
 		//开始解析Msg
-		
-		//switch fmt {
-		//case 3:
-		//case 2:
-		//}
 		if fmt <= 2 {
-		
-		
+			if _, err = io.ReadAtLeast(rs.c, bootstrap, 3); err != nil {return err}
+			st.head.timestamp = int64(BigEnd24(bootstrap))
+			if fmt <= 1 {
+				if _, err = io.ReadAtLeast(rs.c, bootstrap, 4); err != nil {return err}
+				st.head.msgLen = BigEnd24(bootstrap[3:])
+				st.head.msgType = int(bootstrap[6])
+				if fmt == 0 {
+					if _, err = io.ReadAtLeast(rs.c, bootstrap, 4); err != nil {return err}
+					st.head.msgLen = BigEnd24(bootstrap[3:])
+					st.head.msgType = int(bootstrap[6])
+					st.head.msId = binary.BigEndian.Uint32(bootstrap[7:])
+				}
+			}
 		}
+		
+		//
 	}
 }
 
@@ -120,9 +129,11 @@ func getStream(csid int) *Stream{
 
 type Header struct {
 	csid int
+	msId uint32
 	timestamp int64
 	msgType int
 	msgId int
+	msgLen int32
 }
 
 type Stream struct {
