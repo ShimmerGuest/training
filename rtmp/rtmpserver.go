@@ -7,6 +7,8 @@ import (
 	`net`
 )
 
+const default_chunk_szie = 128
+
 func Run(addr string) error {
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -33,6 +35,7 @@ func handlerConnect(c net.Conn) {
 	
 	rs := RtmpSession{
 		c:c,
+		chunkSize:default_chunk_szie,
 	}
 	
 	err := receiveMsg(&rs)
@@ -41,7 +44,6 @@ func handlerConnect(c net.Conn) {
 	
 	//close 只作为警告处理
 	err := c.Close()
-	
 }
 
 
@@ -87,30 +89,51 @@ func receiveMsg(rs *RtmpSession) error {
 		
 		//将当前流的msg和head放到流中
 		st := getStream(csid)
-		st.head.csid = 1
-		
-		//
+		st.m.head.csid = 1
 		
 		//开始解析Msg
 		switch fmt {
 		case 0:
 			if _, err = io.ReadAtLeast(rs.c, bootstrap, 11); err != nil {return err}
-			st.head.timestamp =int64(BigEnd24(bootstrap))
-			st.head.msgLen = BigEnd24(bootstrap[3:])
-			st.head.msgType = int(bootstrap[6])
-			st.head.msId = binary.BigEndian.Uint32(bootstrap[7:])
+			st.m.clear()
+			st.m.head.timestamp =int64(BigEnd24(bootstrap))
+			st.m.head.msgLen = int(BigEnd24(bootstrap[3:]))
+			st.m.head.msgType = int(bootstrap[6])
+			st.m.head.msId = binary.BigEndian.Uint32(bootstrap[7:])
 		case 1:
 			if _, err = io.ReadAtLeast(rs.c, bootstrap, 11); err != nil {return err}
-			st.head.timestampDelta = int64(BigEnd24(bootstrap))
-			st.head.timestamp += st.head.timestampDelta
-			st.head.msgLen = BigEnd24(bootstrap[3:])
-			st.head.msgType = int(bootstrap[6])
+			st.m.head.timestampDelta = int64(BigEnd24(bootstrap))
+			st.m.head.timestamp += st.m.head.timestampDelta
+			st.m.head.msgLen = int(BigEnd24(bootstrap[3:]))
+			st.m.head.msgType = int(bootstrap[6])
 		case 2:
-			st.head.timestampDelta = int64(BigEnd24(bootstrap))
-			st.head.timestamp += st.head.timestampDelta
+			st.m.head.timestampDelta = int64(BigEnd24(bootstrap))
+			st.m.head.timestamp += st.m.head.timestampDelta
 		case 3:
 		}
+		
+		//计算还需要多少byte拼接完这个message
+		//chunk的大小都是固定的
+		//最后一个chunk可能会小于chunk大小。
+		
+		//计算需要读取数据的大小
+		needSize := st.m.head.msgLen - len(st.m.msgBuf)
+		if needSize > rs.chunkSize {
+			//如果大于一个chunk那么就需要读取一个chunk数据
+			needSize = rs.chunkSize
+		}
+		
+		chunkData := make([]byte, needSize)
 		//
+		if _, err = io.ReadAtLeast(rs.c, chunkData, needSize); err != nil {return err}
+		
+		//
+		st.m.feed(chunkData)
+		
+		//当前已经满了
+		if needSize > rs.chunkSize {
+			 //handler msg
+		}
 	}
 }
 
@@ -120,15 +143,27 @@ func getStream(csid int) *Stream{
 	
 	s, ok := csid2stream[csid]
 	if !ok {
-		csid2stream[csid] = &Stream{
-			head:   Header{
-				csid:csid,
+		s = &Stream{
+			m:Message{
+				head:   Header{
+					csid:           csid,
+					msId:           0,
+					timestamp:      0,
+					timestampDelta: 0,
+					msgType:        0,
+					msgId:          0,
+					msgLen:         0,
+				},
+				msgBuf: make([]byte, 100),
 			},
-			msgBuf: make([]byte, 100),
 		}
+		csid2stream[csid] = s
 	}
+	
+	return s
 }
 
+//头
 type Header struct {
 	csid int
 	msId uint32
@@ -136,17 +171,39 @@ type Header struct {
 	timestampDelta int64
 	msgType int
 	msgId int
-	msgLen int32
+	msgLen int
 }
 
+//
 type Stream struct {
-	head    Header
-	msgBuf []byte
+	m Message
+	
+	//推流session
+	pub RtmpSession
+	
+	//拉流session
+	sub []RtmpSession
+}
+
+
+func (s *Stream) Msg()  *Message{
+	return &s.m
 }
 
 type RtmpSession struct {
 	c net.Conn
+	chunkSize int
 }
 
+type Message struct {
+	head Header
+	msgBuf []byte
+}
 
+func (m* Message) feed(data []byte) {
+	m.msgBuf = append(m.msgBuf, data...)
+}
 
+func (m* Message)clear() {
+	m.msgBuf = m.msgBuf[:0]
+}
