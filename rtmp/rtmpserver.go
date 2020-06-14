@@ -92,22 +92,24 @@ func receiveMsg(rs *RtmpSession) error {
 		//
 		
 		//开始解析Msg
-		if fmt <= 2 {
-			if _, err = io.ReadAtLeast(rs.c, bootstrap, 3); err != nil {return err}
-			st.head.timestamp = int64(BigEnd24(bootstrap))
-			if fmt <= 1 {
-				if _, err = io.ReadAtLeast(rs.c, bootstrap, 4); err != nil {return err}
-				st.head.msgLen = BigEnd24(bootstrap[3:])
-				st.head.msgType = int(bootstrap[6])
-				if fmt == 0 {
-					if _, err = io.ReadAtLeast(rs.c, bootstrap, 4); err != nil {return err}
-					st.head.msgLen = BigEnd24(bootstrap[3:])
-					st.head.msgType = int(bootstrap[6])
-					st.head.msId = binary.BigEndian.Uint32(bootstrap[7:])
-				}
-			}
+		switch fmt {
+		case 0:
+			if _, err = io.ReadAtLeast(rs.c, bootstrap, 11); err != nil {return err}
+			st.head.timestamp =int64(BigEnd24(bootstrap))
+			st.head.msgLen = BigEnd24(bootstrap[3:])
+			st.head.msgType = int(bootstrap[6])
+			st.head.msId = binary.BigEndian.Uint32(bootstrap[7:])
+		case 1:
+			if _, err = io.ReadAtLeast(rs.c, bootstrap, 11); err != nil {return err}
+			st.head.timestampDelta = int64(BigEnd24(bootstrap))
+			st.head.timestamp += st.head.timestampDelta
+			st.head.msgLen = BigEnd24(bootstrap[3:])
+			st.head.msgType = int(bootstrap[6])
+		case 2:
+			st.head.timestampDelta = int64(BigEnd24(bootstrap))
+			st.head.timestamp += st.head.timestampDelta
+		case 3:
 		}
-		
 		//
 	}
 }
@@ -131,6 +133,7 @@ type Header struct {
 	csid int
 	msId uint32
 	timestamp int64
+	timestampDelta int64
 	msgType int
 	msgId int
 	msgLen int32
